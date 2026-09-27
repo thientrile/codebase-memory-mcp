@@ -63,8 +63,16 @@
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
+#ifdef __FreeBSD__
+#include <sys/types.h>
+#include <sys/sysctl.h>
+#endif
 
 /* ── Constants ────────────────────────────────────────────────── */
+
+#ifndef CBM_VERSION
+#define CBM_VERSION "dev"
+#endif
 
 /* Max JSON-RPC request body size (1 MB) — transport enforces the same cap. */
 #define MAX_BODY_SIZE CBM_HTTP_MAX_BODY
@@ -143,8 +151,10 @@ static void handle_ui_config(cbm_http_conn_t *c, const cbm_http_req_t *req) {
      * audit forbids hardcoded external URLs in graph-ui source (external
      * targets must come from an auditable backend response, same pattern as
      * the /api/repo-info deep-links). */
-    cbm_http_replyf(c, 200, g_cors_json, "{\"lang\":\"%s\",\"upstream_issues_url\":\"%s\"}",
-                    lang_buf, "https://github.com/DeusData/codebase-memory-mcp/issues/new");
+    cbm_http_replyf(c, 200, g_cors_json,
+                    "{\"lang\":\"%s\",\"version\":\"%s\",\"upstream_issues_url\":\"%s\"}",
+                    lang_buf, CBM_VERSION,
+                    "https://github.com/DeusData/codebase-memory-mcp/issues/new");
 }
 
 /* ── Server state ─────────────────────────────────────────────── */
@@ -705,7 +715,6 @@ static void handle_processes(cbm_http_conn_t *c) {
 
 /* ── Directory browser ────────────────────────────────────────── */
 
-#include <dirent.h>
 
 static void append_roots_json(char *buf, size_t bufsz, int *pos) {
     http_appendf(buf, bufsz, pos, ",\"roots\":[");
@@ -760,7 +769,7 @@ static void handle_browse(cbm_http_conn_t *c, const cbm_http_req_t *req) {
         return;
     }
 
-    DIR *dir = opendir(path);
+    cbm_dir_t *dir = cbm_opendir(path);
     if (!dir) {
         cbm_http_replyf(c, 403, g_cors_json, "{\"error\":\"cannot open directory\"}");
         return;
@@ -771,16 +780,16 @@ static void handle_browse(cbm_http_conn_t *c, const cbm_http_req_t *req) {
     int pos = 0;
     http_appendf(buf, sizeof(buf), &pos, "{\"path\":\"%s\",\"dirs\":[", path);
 
-    struct dirent *ent;
+    cbm_dirent_t *ent;
     int count = 0;
-    while ((ent = readdir(dir)) != NULL) {
+    while ((ent = cbm_readdir(dir)) != NULL) {
         /* Skip hidden dirs and . / .. */
-        if (ent->d_name[0] == '.')
+        if (ent->name[0] == '.')
             continue;
 
         /* Check if it's actually a directory */
         char full[2048];
-        snprintf(full, sizeof(full), "%s/%s", path, ent->d_name);
+        snprintf(full, sizeof(full), "%s/%s", path, ent->name);
         if (!cbm_is_dir(full))
             continue;
 
@@ -789,7 +798,7 @@ static void handle_browse(cbm_http_conn_t *c, const cbm_http_req_t *req) {
         /* Escape directory name to prevent XSS (e.g., names with quotes/angle brackets) */
         {
             char esc[512];
-            cbm_json_escape(esc, (int)sizeof(esc), ent->d_name);
+            cbm_json_escape(esc, (int)sizeof(esc), ent->name);
             http_appendf(buf, sizeof(buf), &pos, "\"%s\"", esc);
         }
         if (pos >= (int)sizeof(buf)) {
@@ -800,7 +809,7 @@ static void handle_browse(cbm_http_conn_t *c, const cbm_http_req_t *req) {
         if (count >= 200)
             break; /* safety limit */
     }
-    closedir(dir);
+    cbm_closedir(dir);
 
     /* Parent path — escape to prevent injection */
     char parent[1024];
@@ -1003,6 +1012,15 @@ static bool resolve_self_executable(char *out, size_t outsz) {
         return copy_path(out, outsz, buf);
     }
     return false;
+#elif defined(__FreeBSD__)
+    /* No /proc by default on FreeBSD; ask the kernel for our own path. */
+    char buf[1024];
+    int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1};
+    size_t cb = sizeof(buf);
+    if (sysctl(mib, 4, buf, &cb, NULL, 0) == 0 && cb > 0) {
+        return copy_path(out, outsz, buf);
+    }
+    return false;
 #else
     char buf[1024];
     ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
@@ -1052,15 +1070,50 @@ bool cbm_http_server_resolve_binary_path(const char *argv0, char *out, size_t ou
     }
 #endif
 
+#ifndef _WIN32
+    /* #1204: never hand back a self-resolved path we have not confirmed is
+     * executable. After an installer's atomic rename-over, the resolved image
+     * path no longer exists (Linux readlink reads "<path> (deleted)"), and an
+     * unvalidated return turns into a doomed worker spawn (ENOENT). */
+    if (resolve_self_executable(out, outsz)) {
+        if (is_executable_file(out)) {
+            return true;
+        }
+#if defined(__linux__)
+        /* Deleted image: the /proc/self/exe magic link still executes the
+         * in-memory OLD build — the only spawn that satisfies the worker's
+         * build-fingerprint gate (a rename-over leaves the on-disk path
+         * holding a DIFFERENT build). Hand back the link, not the stale
+         * path. Deliberately NOT the saved launch path: preferring it swaps
+         * an ENOENT for a fingerprint refusal. */
+        return copy_path(out, outsz, "/proc/self/exe");
+#else
+        /* macOS has no magic link. Fail closed: the supervisor logs
+         * index.supervisor.no_self_path and indexing resumes after a daemon
+         * restart, instead of spawning a missing or mismatched binary. */
+        out[0] = '\0';
+        return false;
+#endif
+    }
+#else
     if (resolve_self_executable(out, outsz)) {
         return true;
     }
+#endif
     return copy_path(out, outsz, argv0);
 }
 
 void cbm_http_server_set_binary_path(const char *path) {
     if (path) {
-        if (!cbm_http_server_resolve_binary_path(path, g_binary_path, sizeof(g_binary_path))) {
+        /* Resolve into a local buffer first: `path` may alias g_binary_path
+         * on a repeated call. Resolving in place first hits resolve's leading
+         * out[0]='\0', which zeroes the shared buffer and silently discards
+         * the very path we were asked to re-resolve — and the in-place write
+         * is one reset-reorder away from an overlapping snprintf. */
+        char resolved[sizeof(g_binary_path)];
+        if (cbm_http_server_resolve_binary_path(path, resolved, sizeof(resolved))) {
+            snprintf(g_binary_path, sizeof(g_binary_path), "%s", resolved);
+        } else {
             g_binary_path[0] = '\0';
         }
     }
@@ -1721,7 +1774,8 @@ static bool rpc_is_allowed_for_ui(const char *body, size_t body_len) {
     const char *name_text = yyjson_is_str(name) ? yyjson_get_str(name) : NULL;
     bool allowed =
         method_text && strcmp(method_text, "tools/call") == 0 && name_text &&
-        (strcmp(name_text, "list_projects") == 0 || strcmp(name_text, "get_code_snippet") == 0);
+        (strcmp(name_text, "list_projects") == 0 || strcmp(name_text, "get_graph_schema") == 0 ||
+         strcmp(name_text, "get_code_snippet") == 0);
     yyjson_doc_free(document);
     return allowed;
 }
