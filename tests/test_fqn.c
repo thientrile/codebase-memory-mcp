@@ -96,6 +96,10 @@ TEST(fqn_relative_js_import_preserves_dotted_basename_issue1682) {
     ASSERT_FQN(cbm_pipeline_resolve_relative_import(
                    "packages/api/src/modules/moduleA/moduleA.service.ts", "./create-thing.dto"),
                "packages/api/src/modules/moduleA/create-thing.dto");
+    /* A spelled-out component extension is stripped, matching the Vue file's
+     * module QN. */
+    ASSERT_FQN(cbm_pipeline_resolve_relative_import("web/src/App.ts", "./components/Foo.vue"),
+               "web/src/components/Foo");
     PASS();
 }
 

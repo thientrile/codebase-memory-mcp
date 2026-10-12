@@ -154,6 +154,26 @@ TEST(path_alias_strips_ext) {
     PASS();
 }
 
+/* The resolved path becomes a module QN with no further stripping, so a spelled
+ * out component extension must go while a dotted basename stays. */
+TEST(path_alias_strips_component_ext_keeps_dotted_basename) {
+    cbm_path_alias_map_t *m = make_map(NULL, 1, "@/*", "src/*");
+    char *vue = cbm_path_alias_resolve(m, "@/components/Foo.vue");
+    char *service = cbm_path_alias_resolve(m, "@/conversations/conversations.service");
+    char *config = cbm_path_alias_resolve(m, "@/config/app.config");
+    ASSERT_NOT_NULL(vue);
+    ASSERT_NOT_NULL(service);
+    ASSERT_NOT_NULL(config);
+    ASSERT_STR_EQ(vue, "src/components/Foo");
+    ASSERT_STR_EQ(service, "src/conversations/conversations.service");
+    ASSERT_STR_EQ(config, "src/config/app.config");
+    free(vue);
+    free(service);
+    free(config);
+    free_map(m);
+    PASS();
+}
+
 /* ── baseUrl fallback for non-relative, non-package imports ────── */
 
 TEST(path_alias_baseurl_fallback) {
@@ -414,6 +434,7 @@ void suite_path_alias(void) {
     RUN_TEST(path_alias_specificity_longest_first);
     RUN_TEST(path_alias_exact_match);
     RUN_TEST(path_alias_strips_ext);
+    RUN_TEST(path_alias_strips_component_ext_keeps_dotted_basename);
     RUN_TEST(path_alias_baseurl_fallback);
     RUN_TEST(path_alias_null_safety);
     RUN_TEST(path_alias_find_for_file_nearest_ancestor);

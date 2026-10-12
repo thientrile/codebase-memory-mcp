@@ -47,25 +47,16 @@ enum {
 
 /* ── Helpers ───────────────────────────────────────────────────── */
 
-/* Strip an explicit JS/TS module extension in place, keeping the dots of an
- * extensionless basename such as `x.service`. The list matches the relative
- * import resolver's, because the caller no longer strips a second time.
- * Returns its argument. */
+/* Strip an explicit module extension in place, keeping the dots of an
+ * extensionless basename such as `x.service`; the caller does not strip a
+ * second time. Returns its argument. */
 static char *strip_resolved_ext(char *path) {
-    static const char *const extensions[] = {
-        ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".json",
-    };
     if (!path) {
         return path;
     }
-    size_t len = strlen(path);
-    for (size_t i = 0; i < sizeof(extensions) / sizeof(extensions[0]); i++) {
-        size_t ext_len = strlen(extensions[i]);
-        if (len > ext_len && strcmp(path + len - ext_len, extensions[i]) == 0) {
-            path[len - ext_len] = '\0';
-            break;
-        }
-    }
+    char *last_slash = strrchr(path, '/');
+    char *segment = last_slash ? last_slash + 1 : path;
+    segment[cbm_pipeline_strip_module_ext(segment, strlen(segment))] = '\0';
     return path;
 }
 
