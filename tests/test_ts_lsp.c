@@ -4125,6 +4125,23 @@ TEST(tslsp_void_returning_method) {
     PASS();
 }
 
+/* Constructor parameter properties are fields: NestJS injects every service as
+ * `constructor(private readonly svc: Svc)` and calls it as `this.svc.m()`. */
+TEST(tslsp_constructor_parameter_property_resolution) {
+    CBMFileResult *r = extract_ts("class Svc { work(): void {} audit(): void {} }\n"
+                                  "class Logger { log(): void {} }\n"
+                                  "class Controller {\n"
+                                  "    constructor(private readonly svc: Svc, public logger: Logger,\n"
+                                  "                plain: Svc) {}\n"
+                                  "    handle(): void { this.svc.work(); this.logger.log(); }\n"
+                                  "}\n");
+    ASSERT_NOT_NULL(r);
+    ASSERT_GTE(require_resolved(r, ".handle", "Svc.work"), 0);
+    ASSERT_GTE(require_resolved(r, ".handle", "Logger.log"), 0);
+    cbm_free_result(r);
+    PASS();
+}
+
 TEST(tslsp_nested_class_resolution) {
     CBMFileResult *r = extract_ts("class Outer {\n"
                                   "    inner: Inner = new Inner();\n"
@@ -4695,6 +4712,7 @@ SUITE(ts_lsp) {
     RUN_TEST(tslsp_in_operator_narrow_smoke);
     RUN_TEST(tslsp_optional_property_chain);
     RUN_TEST(tslsp_void_returning_method);
+    RUN_TEST(tslsp_constructor_parameter_property_resolution);
     RUN_TEST(tslsp_nested_class_resolution);
 
     /* Expression-eval complexity guard. */

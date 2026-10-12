@@ -5317,6 +5317,54 @@ static const CBMType *interface_method_signature_from_ast(TSLSPContext *ctx, TSN
     return cbm_type_func(ctx->arena, NULL, param_count ? param_types : NULL, return_types);
 }
 
+// `constructor(private readonly svc: Svc)` declares the field `svc`. A parameter
+// is a property only when it carries an accessibility modifier, `readonly` or
+// `override`; a plain parameter stays local to the constructor.
+static int collect_parameter_properties(TSLSPContext *ctx, TSNode method, const char **names,
+                                        const CBMType **types, int count, int max_count) {
+    TSNode name = ts_node_child_by_field_name(method, "name", TS_LSP_FIELD_LEN("name"));
+    char *method_name = ts_node_is_null(name) ? NULL : node_text(ctx, name);
+    if (!method_name || strcmp(method_name, "constructor") != 0)
+        return count;
+    TSNode params =
+        ts_node_child_by_field_name(method, "parameters", TS_LSP_FIELD_LEN("parameters"));
+    if (ts_node_is_null(params))
+        return count;
+
+    uint32_t param_total = ts_node_named_child_count(params);
+    for (uint32_t i = 0; i < param_total && count < max_count; i++) {
+        TSNode param = ts_node_named_child(params, i);
+        const char *kind = ts_node_type(param);
+        if (strcmp(kind, "required_parameter") != 0 && strcmp(kind, "optional_parameter") != 0)
+            continue;
+        bool is_property = false;
+        uint32_t child_total = ts_node_child_count(param);
+        for (uint32_t j = 0; j < child_total && !is_property; j++) {
+            const char *ck = ts_node_type(ts_node_child(param, j));
+            is_property = strcmp(ck, "accessibility_modifier") == 0 ||
+                          strcmp(ck, "override_modifier") == 0 || strcmp(ck, "readonly") == 0;
+        }
+        TSNode pattern = ts_node_child_by_field_name(param, "pattern", TS_LSP_FIELD_LEN("pattern"));
+        if (!is_property || ts_node_is_null(pattern) ||
+            strcmp(ts_node_type(pattern), "identifier") != 0)
+            continue;
+        char *field_name = node_text(ctx, pattern);
+        if (!field_name)
+            continue;
+        const CBMType *field_type = cbm_type_unknown();
+        TSNode annotation = ts_node_child_by_field_name(param, "type", TS_LSP_FIELD_LEN("type"));
+        if (!ts_node_is_null(annotation)) {
+            TSNode type_node = ts_node_named_child(annotation, 0);
+            if (!ts_node_is_null(type_node))
+                field_type = ts_parse_type_node(ctx, type_node);
+        }
+        names[count] = field_name;
+        types[count] = field_type;
+        count++;
+    }
+    return count;
+}
+
 // AST sweep: walk class/interface bodies to collect field names+types and refine
 // embedded_types / type_param_names.
 static void ast_sweep_shapes(TSLSPContext *ctx, TSNode root, CBMTypeRegistry *reg) {
@@ -5444,6 +5492,12 @@ static void ast_sweep_shapes(TSLSPContext *ctx, TSNode root, CBMTypeRegistry *re
                 field_names[field_count] = fnm;
                 field_types[field_count] = ft;
                 field_count++;
+                continue;
+            }
+
+            if (!is_interface && strcmp(mk, "method_definition") == 0) {
+                field_count =
+                    collect_parameter_properties(ctx, m, field_names, field_types, field_count, 63);
                 continue;
             }
 
