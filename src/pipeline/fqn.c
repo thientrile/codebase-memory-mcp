@@ -288,8 +288,8 @@ static char *resolve_python_relative(char *buf, size_t buf_size, const char *mod
  * extension spelled out, so they are listed beside the JS/TS ones. */
 size_t cbm_pipeline_strip_module_ext(const char *seg_start, size_t seg_len) {
     static const char *const extensions[] = {
-        ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".json",
-        ".vue", ".svelte", ".astro", ".mdx",
+        ".js",  ".jsx",  ".mjs", ".cjs",    ".ts",    ".tsx", ".mts",
+        ".cts", ".json", ".vue", ".svelte", ".astro", ".mdx",
     };
     for (size_t i = 0; i < sizeof(extensions) / sizeof(extensions[0]); i++) {
         size_t ext_len = strlen(extensions[i]);
