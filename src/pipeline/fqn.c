@@ -282,11 +282,14 @@ static char *resolve_python_relative(char *buf, size_t buf_size, const char *mod
     return strdup(buf);
 }
 
-/* Strip an explicit JS/TS module file extension while preserving dots that are
- * part of an extensionless basename (e.g. "featureX.engine"). */
-static size_t strip_js_module_ext(const char *seg_start, size_t seg_len) {
+/* An explicit list, not the language table: the table also claims suffixes such
+ * as `.config` and `.d` that are ordinary parts of a dotted basename
+ * (`app.config`, `types.d`). Component files are imported with their
+ * extension spelled out, so they are listed beside the JS/TS ones. */
+size_t cbm_pipeline_strip_module_ext(const char *seg_start, size_t seg_len) {
     static const char *const extensions[] = {
-        ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".json",
+        ".js",  ".jsx",  ".mjs", ".cjs",    ".ts",    ".tsx", ".mts",
+        ".cts", ".json", ".vue", ".svelte", ".astro", ".mdx",
     };
     for (size_t i = 0; i < sizeof(extensions) / sizeof(extensions[0]); i++) {
         size_t ext_len = strlen(extensions[i]);
@@ -321,7 +324,7 @@ static char *resolve_js_relative(char *buf, size_t buf_size, const char *module_
             continue;
         }
         if (*p == '\0') {
-            seg_len = strip_js_module_ext(seg_start, seg_len);
+            seg_len = cbm_pipeline_strip_module_ext(seg_start, seg_len);
         }
         if (seg_len > 0 && !path_append_segment(buf, buf_size, seg_start, seg_len)) {
             return NULL;

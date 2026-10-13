@@ -47,21 +47,16 @@ enum {
 
 /* ── Helpers ───────────────────────────────────────────────────── */
 
-/* Strip .ts/.tsx/.js/.jsx in place. Returns its argument. */
+/* Strip an explicit module extension in place, keeping the dots of an
+ * extensionless basename such as `x.service`; the caller does not strip a
+ * second time. Returns its argument. */
 static char *strip_resolved_ext(char *path) {
     if (!path) {
         return path;
     }
-    size_t len = strlen(path);
-    if (len > 3 && path[len - 3] == '.' && (path[len - 2] == 't' || path[len - 2] == 'j') &&
-        path[len - 1] == 's') {
-        path[len - 3] = '\0';
-        return path;
-    }
-    if (len > 4 && path[len - 4] == '.' && (path[len - 3] == 't' || path[len - 3] == 'j') &&
-        path[len - 2] == 's' && path[len - 1] == 'x') {
-        path[len - 4] = '\0';
-    }
+    char *last_slash = strrchr(path, '/');
+    char *segment = last_slash ? last_slash + 1 : path;
+    segment[cbm_pipeline_strip_module_ext(segment, strlen(segment))] = '\0';
     return path;
 }
 

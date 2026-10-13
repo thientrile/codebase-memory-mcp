@@ -455,6 +455,68 @@ TEST(ei_typescript_dotted_relative_import_targets_source_module_issue1682) {
     PASS();
 }
 
+/* The #1682 dotted-basename fix, through a tsconfig `paths` alias.  The alias
+ * branch stripped `.service` from `src/conversations/conversations.service`,
+ * missed the module, and bound the import to an unrelated file that also
+ * mentions the class (the NestJS `x.service.ts` layout hits this on every
+ * aliased import). */
+TEST(ei_typescript_dotted_alias_import_targets_source_module) {
+    static const char *service_path = "src/conversations/conversations.service.ts";
+    static const char *consumer_path = "src/scrm/customers/scrm-interaction.service.ts";
+    static const EILangFile f[] = {
+        {"tsconfig.json",
+         "{ \"compilerOptions\": { \"baseUrl\": \"./\", \"paths\": { \"src/*\": [\"src/*\"] } } }\n"},
+        {"src/conversations/conversations.service.ts",
+         "export class ConversationsService {\n"
+         "  addTagsToConversation(dto: string): string { return dto; }\n"
+         "}\n"},
+        {"src/tasks/capabilities/task-write-capabilities.spec.ts",
+         "import { ConversationsService } from 'src/conversations/conversations.service';\n"
+         "export function ConversationsServiceFixture(): ConversationsService {\n"
+         "  return new ConversationsService();\n"
+         "}\n"},
+        {"src/scrm/customers/scrm-interaction.service.ts",
+         "import { ConversationsService } from 'src/conversations/conversations.service';\n"
+         "export class ScrmInteractionService {\n"
+         "  run(s: ConversationsService): string { return s.addTagsToConversation('x'); }\n"
+         "}\n"},
+    };
+
+    EILangProj lp;
+    cbm_store_t *store = ei_index_files(&lp, f, (int)(sizeof(f) / sizeof(f[0])));
+    ASSERT_NOT_NULL(store);
+
+    int64_t consumer_id = ei_node_id_for_file_label(store, lp.project, consumer_path, "File");
+    ASSERT_GT(consumer_id, 0);
+
+    cbm_edge_t *edges = NULL;
+    int edge_count = 0;
+    ASSERT_EQ(
+        cbm_store_find_edges_by_source_type(store, consumer_id, "IMPORTS", &edges, &edge_count),
+        CBM_STORE_OK);
+
+    bool saw_import = false;
+    bool target_ok = false;
+    for (int i = 0; i < edge_count; i++) {
+        const char *props = edges[i].properties_json ? edges[i].properties_json : "";
+        if (!strstr(props, "\"local_name\":\"ConversationsService\"")) {
+            continue;
+        }
+        cbm_node_t *target = (cbm_node_t *)calloc(1, sizeof(cbm_node_t));
+        ASSERT_NOT_NULL(target);
+        ASSERT_EQ(cbm_store_find_node_by_id(store, edges[i].target_id, target), CBM_STORE_OK);
+        saw_import = true;
+        target_ok = target->file_path && strcmp(target->file_path, service_path) == 0;
+        cbm_store_free_nodes(target, 1);
+    }
+    cbm_store_free_edges(edges, edge_count);
+    ei_cleanup(&lp, store);
+
+    ASSERT_TRUE(saw_import);
+    ASSERT_TRUE(target_ok);
+    PASS();
+}
+
 /* TypeScript: default import `import helper from './util'`. */
 TEST(ei_typescript_default_import) {
     static const EILangFile f[] = {
@@ -1154,6 +1216,7 @@ SUITE(edge_imports) {
     /* ── GREEN GUARDS — TypeScript (must stay passing) ── */
     RUN_TEST(ei_typescript_named_relative_import);
     RUN_TEST(ei_typescript_dotted_relative_import_targets_source_module_issue1682);
+    RUN_TEST(ei_typescript_dotted_alias_import_targets_source_module);
     RUN_TEST(ei_typescript_default_import);
     RUN_TEST(ei_typescript_namespace_import);
     RUN_TEST(ei_typescript_aliased_import);

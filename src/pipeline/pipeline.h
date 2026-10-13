@@ -16,6 +16,7 @@
 #define CBM_PIPELINE_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdatomic.h>
 
@@ -200,6 +201,12 @@ char *cbm_pipeline_fqn_folder(const char *project, const char *rel_dir);
  * treat those as external/unresolvable). Handles ".", "..", and leading
  * dot-only segments used by Python relative imports. */
 char *cbm_pipeline_resolve_relative_import(const char *source_rel, const char *module_path);
+
+/* Length of the last path segment [seg_start, seg_start + seg_len) without an
+ * explicit module file extension (`.ts`, `.vue`, ...). Dots that belong to an
+ * extensionless basename such as `x.service` are kept. Every import resolver
+ * strips through this one list so their module QNs agree. */
+size_t cbm_pipeline_strip_module_ext(const char *seg_start, size_t seg_len);
 
 /* Derive project name from an absolute path.
  * Replaces / and : with -, collapses --, trims leading -.

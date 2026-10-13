@@ -1414,7 +1414,10 @@ char *cbm_pipeline_resolve_module(const cbm_pipeline_ctx_t *ctx, const char *sou
         if (amap) {
             char *aliased = cbm_path_alias_resolve(amap, module_path);
             if (aliased) {
-                char *qn = cbm_pipeline_fqn_module(ctx->project_name, aliased);
+                /* As in step 1: the alias resolver already removed the file
+                 * extension, so a dotted basename such as `x.service` must not
+                 * be stripped again. */
+                char *qn = cbm_pipeline_fqn_folder(ctx->project_name, aliased);
                 free(aliased);
                 return qn;
             }
